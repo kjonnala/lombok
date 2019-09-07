@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2017 The Project Lombok Authors.
+ * Copyright (C) 2013-2018 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,8 +33,12 @@ import java.lang.annotation.Target;
  * <p>
  * If a member is annotated, it must be either a constructor or a method. If a class is annotated,
  * then a private constructor is generated with all fields as arguments
- * (as if {@code @AllArgsConstructor(AccessLevel.PRIVATE)} is present
+ * (as if {@code @AllArgsConstructor(access = AccessLevel.PRIVATE)} is present
  * on the class), and it is as if this constructor has been annotated with {@code @Builder} instead.
+ * Note that this constructor is only generated if you haven't written any constructors and also haven't
+ * added any explicit {@code @XArgsConstructor} annotations. In those cases, lombok will assume an all-args
+ * constructor is present and generate code that uses it; this means you'd get a compiler error if this
+ * constructor is not present.
  * <p>
  * The effect of {@code @Builder} is that an inner class is generated named <code><strong>T</strong>Builder</code>,
  * with a private constructor. Instances of <code><strong>T</strong>Builder</code> are made with the
@@ -55,8 +59,8 @@ import java.lang.annotation.Target;
  * 
  * <pre>
  * &#064;Builder
- * class Example {
- * 	private int foo;
+ * class Example&lt;T&gt; {
+ * 	private T foo;
  * 	private final String bar;
  * }
  * </pre>
@@ -103,6 +107,8 @@ import java.lang.annotation.Target;
  * 	}
  * }
  * </pre>
+ * 
+ * @see Singular
  */
 @Target({TYPE, METHOD, CONSTRUCTOR})
 @Retention(SOURCE)
@@ -114,7 +120,7 @@ public @interface Builder {
 	@Retention(SOURCE)
 	public @interface Default {}
 
-	/** @return Name of the method that creates a new builder instance. Default: {@code builder}. */
+	/** @return Name of the method that creates a new builder instance. Default: {@code builder}. If the empty string, suppress generating the {@code builder} method. */
 	String builderMethodName() default "builder";
 	
 	/** @return Name of the method in the builder class that creates an instance of your {@code @Builder}-annotated class. */
@@ -123,9 +129,9 @@ public @interface Builder {
 	/**
 	 * Name of the builder class.
 	 * 
-	 * Default for {@code @Builder} on types and constructors: {@code (TypeName)Builder}.
+	 * Default for {@code @Builder} on types and constructors: see the configkey {@code lombok.builder.className}, which if not set defaults to {@code (TypeName)Builder}.
 	 * <p>
-	 * Default for {@code @Builder} on methods: {@code (ReturnTypeName)Builder}.
+	 * Default for {@code @Builder} on methods: see the configkey {@code lombok.builder.className}, which if not set defaults to {@code (ReturnTypeName)Builder}.
 	 * 
 	 * @return Name of the builder class that will be generated (or if it already exists, will be filled with builder elements).
 	 */
@@ -139,6 +145,14 @@ public @interface Builder {
 	 * @return Whether to generate a {@code toBuilder()} method.
 	 */
 	boolean toBuilder() default false;
+	
+	/**
+	 * Sets the access level of the generated builder class. By default, generated builder classes are {@code public}.
+	 * Note: This does nothing if you write your own builder class (we won't change its access level).
+	 * 
+	 * @return The builder class will be generated with this access modifier.
+	 */
+	AccessLevel access() default lombok.AccessLevel.PUBLIC;
 	
 	/**
 	 * Put on a field (in case of {@code @Builder} on a type) or a parameter (for {@code @Builder} on a constructor or static method) to

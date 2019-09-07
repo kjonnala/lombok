@@ -1,4 +1,4 @@
 apt-get update && apt-get install -y wget
-wget --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/9.0.1+11/jdk-9.0.1_linux-x64_bin.tar.gz -O jdk.tar.gz
+wget https://github.com/AdoptOpenJDK/openjdk9-binaries/releases/download/jdk-9.0.4%2B11/OpenJDK9U-jdk_x64_linux_hotspot_9.0.4_11.tar.gz -O jdk.tar.gz
 tar -xzf jdk.tar.gz -C /opt/
-mv /opt/jdk-9.0.1 /opt/jdk
+mv /opt/jdk-9.0.4+11 /opt/jdk

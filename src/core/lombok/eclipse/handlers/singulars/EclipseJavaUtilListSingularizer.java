@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 The Project Lombok Authors.
+ * Copyright (C) 2015-2019 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,7 +35,6 @@ import lombok.eclipse.handlers.EclipseSingularsRecipes.SingularData;
 import org.eclipse.jdt.internal.compiler.ast.AllocationExpression;
 import org.eclipse.jdt.internal.compiler.ast.Assignment;
 import org.eclipse.jdt.internal.compiler.ast.BreakStatement;
-import org.eclipse.jdt.internal.compiler.ast.CaseStatement;
 import org.eclipse.jdt.internal.compiler.ast.Expression;
 import org.eclipse.jdt.internal.compiler.ast.FieldReference;
 import org.eclipse.jdt.internal.compiler.ast.LocalDeclaration;
@@ -45,7 +44,6 @@ import org.eclipse.jdt.internal.compiler.ast.QualifiedTypeReference;
 import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
 import org.eclipse.jdt.internal.compiler.ast.Statement;
 import org.eclipse.jdt.internal.compiler.ast.SwitchStatement;
-import org.eclipse.jdt.internal.compiler.ast.ThisReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeReference;
 import org.mangosdk.spi.ProviderFor;
 
@@ -56,16 +54,26 @@ public class EclipseJavaUtilListSingularizer extends EclipseJavaUtilListSetSingu
 		return LombokImmutableList.of("java.util.List", "java.util.Collection", "java.lang.Iterable");
 	}
 	
-	@Override public void appendBuildCode(SingularData data, EclipseNode builderType, List<Statement> statements, char[] targetVariableName) {
+	private static final char[] EMPTY_LIST = {'e', 'm', 'p', 't', 'y', 'L', 'i', 's', 't'};
+	
+	@Override protected char[][] getEmptyMakerReceiver(String targetFqn) {
+		return JAVA_UTIL_COLLECTIONS;
+	}
+	
+	@Override protected char[] getEmptyMakerSelector(String targetFqn) {
+		return EMPTY_LIST;
+	}
+	
+	@Override public void appendBuildCode(SingularData data, EclipseNode builderType, List<Statement> statements, char[] targetVariableName, String builderVariable) {
 		if (useGuavaInstead(builderType)) {
-			guavaListSetSingularizer.appendBuildCode(data, builderType, statements, targetVariableName);
+			guavaListSetSingularizer.appendBuildCode(data, builderType, statements, targetVariableName, builderVariable);
 			return;
 		}
 		
 		List<Statement> switchContents = new ArrayList<Statement>();
 		
 		/* case 0: (empty) break; */ {
-			switchContents.add(new CaseStatement(makeIntLiteral(new char[] {'0'}, null), 0, 0));
+			switchContents.add(Eclipse.createCaseStatement(makeIntLiteral(new char[] {'0'}, null)));
 			MessageSend invoke = new MessageSend();
 			invoke.receiver = new QualifiedNameReference(JAVA_UTIL_COLLECTIONS, NULL_POSS, 0, 0);
 			invoke.selector = "emptyList".toCharArray();
@@ -74,9 +82,9 @@ public class EclipseJavaUtilListSingularizer extends EclipseJavaUtilListSetSingu
 		}
 		
 		/* case 1: (singleton) break; */ {
-			switchContents.add(new CaseStatement(makeIntLiteral(new char[] {'1'}, null), 0, 0));
+			switchContents.add(Eclipse.createCaseStatement(makeIntLiteral(new char[] {'1'}, null)));
 			FieldReference thisDotField = new FieldReference(data.getPluralName(), 0L);
-			thisDotField.receiver = new ThisReference(0, 0);
+			thisDotField.receiver = getBuilderReference(builderVariable);
 			MessageSend thisDotFieldGet0 = new MessageSend();
 			thisDotFieldGet0.receiver = thisDotField;
 			thisDotFieldGet0.selector = new char[] {'g', 'e', 't'};
@@ -92,12 +100,12 @@ public class EclipseJavaUtilListSingularizer extends EclipseJavaUtilListSetSingu
 		}
 		
 		/* default: Create by passing builder field to constructor. */ {
-			switchContents.add(new CaseStatement(null, 0, 0));
+			switchContents.add(Eclipse.createCaseStatement(null));
 			
 			Expression argToUnmodifiable;
 			/* new j.u.ArrayList<Generics>(this.pluralName); */ {
 				FieldReference thisDotPluralName = new FieldReference(data.getPluralName(), 0L);
-				thisDotPluralName.receiver = new ThisReference(0, 0);
+				thisDotPluralName.receiver = getBuilderReference(builderVariable);
 				TypeReference targetTypeExpr = new QualifiedTypeReference(JAVA_UTIL_ARRAYLIST, NULL_POSS);
 				targetTypeExpr = addTypeArgs(1, false, builderType, targetTypeExpr, data.getTypeArgs());
 				AllocationExpression constructorCall = new AllocationExpression();
@@ -116,8 +124,8 @@ public class EclipseJavaUtilListSingularizer extends EclipseJavaUtilListSetSingu
 		}
 		
 		SwitchStatement switchStat = new SwitchStatement();
-		switchStat.statements = switchContents.toArray(new Statement[switchContents.size()]);
-		switchStat.expression = getSize(builderType, data.getPluralName(), true);
+		switchStat.statements = switchContents.toArray(new Statement[0]);
+		switchStat.expression = getSize(builderType, data.getPluralName(), true, builderVariable);
 		
 		TypeReference localShadowerType = new QualifiedTypeReference(Eclipse.fromQualifiedName(data.getTargetFqn()), NULL_POSS);
 		localShadowerType = addTypeArgs(1, false, builderType, localShadowerType, data.getTypeArgs());

@@ -1,5 +1,6 @@
+//CONF: lombok.builder.className = Test*Name
 import java.util.List;
-import lombok.experimental.Builder;
+import lombok.Builder;
 
 class BuilderComplex {
 	@Builder(buildMethodName = "execute")

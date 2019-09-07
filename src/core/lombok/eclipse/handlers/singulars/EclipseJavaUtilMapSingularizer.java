@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 The Project Lombok Authors.
+ * Copyright (C) 2015-2019 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -45,25 +45,42 @@ import org.eclipse.jdt.internal.compiler.ast.MethodDeclaration;
 import org.eclipse.jdt.internal.compiler.ast.NullLiteral;
 import org.eclipse.jdt.internal.compiler.ast.OperatorIds;
 import org.eclipse.jdt.internal.compiler.ast.QualifiedTypeReference;
-import org.eclipse.jdt.internal.compiler.ast.ReturnStatement;
 import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
 import org.eclipse.jdt.internal.compiler.ast.Statement;
 import org.eclipse.jdt.internal.compiler.ast.ThisReference;
 import org.eclipse.jdt.internal.compiler.ast.TypeReference;
 import org.eclipse.jdt.internal.compiler.classfmt.ClassFileConstants;
-import org.eclipse.jdt.internal.compiler.lookup.TypeIds;
 import org.mangosdk.spi.ProviderFor;
 
+import lombok.AccessLevel;
 import lombok.core.LombokImmutableList;
+import lombok.core.configuration.CheckerFrameworkVersion;
 import lombok.core.handlers.HandlerUtil;
 import lombok.eclipse.EclipseNode;
 import lombok.eclipse.handlers.EclipseSingularsRecipes.EclipseSingularizer;
 import lombok.eclipse.handlers.EclipseSingularsRecipes.SingularData;
+import lombok.eclipse.handlers.EclipseSingularsRecipes.StatementMaker;
+import lombok.eclipse.handlers.EclipseSingularsRecipes.TypeReferenceMaker;
+import lombok.eclipse.handlers.HandleNonNull;
 
 @ProviderFor(EclipseSingularizer.class)
 public class EclipseJavaUtilMapSingularizer extends EclipseJavaUtilSingularizer {
 	@Override public LombokImmutableList<String> getSupportedTypes() {
 		return LombokImmutableList.of("java.util.Map", "java.util.SortedMap", "java.util.NavigableMap");
+	}
+	
+	private static final char[] EMPTY_SORTED_MAP = {'e', 'm', 'p', 't', 'y', 'S', 'o', 'r', 't', 'e', 'd', 'M', 'a', 'p'};
+	private static final char[] EMPTY_NAVIGABLE_MAP = {'e', 'm', 'p', 't', 'y', 'N', 'a', 'v', 'i', 'g', 'a', 'b', 'l', 'e', 'M', 'a', 'p'};
+	private static final char[] EMPTY_MAP = {'e', 'm', 'p', 't', 'y', 'M', 'a', 'p'};
+	
+	@Override protected char[][] getEmptyMakerReceiver(String targetFqn) {
+		return JAVA_UTIL_COLLECTIONS;
+	}
+	
+	@Override protected char[] getEmptyMakerSelector(String targetFqn) {
+		if (targetFqn.endsWith("SortedMap")) return EMPTY_SORTED_MAP;
+		if (targetFqn.endsWith("NavigableMap")) return EMPTY_NAVIGABLE_MAP;
+		return EMPTY_MAP;
 	}
 	
 	@Override public List<char[]> listFieldsToBeGenerated(SingularData data, EclipseNode builderType) {
@@ -126,6 +143,7 @@ public class EclipseJavaUtilMapSingularizer extends EclipseJavaUtilSingularizer 
 			buildValueField.declarationSourceEnd = -1;
 			buildValueField.type = type;
 		}
+		
 		data.setGeneratedByRecursive(buildKeyField);
 		data.setGeneratedByRecursive(buildValueField);
 		EclipseNode keyFieldNode = injectFieldAndMarkGenerated(builderType, buildKeyField);
@@ -133,29 +151,21 @@ public class EclipseJavaUtilMapSingularizer extends EclipseJavaUtilSingularizer 
 		return Arrays.asList(keyFieldNode, valueFieldNode);
 	}
 	
-	@Override public void generateMethods(SingularData data, boolean deprecate, EclipseNode builderType, boolean fluent, boolean chain) {
+	@Override public void generateMethods(CheckerFrameworkVersion cfv, SingularData data, boolean deprecate, EclipseNode builderType, boolean fluent, TypeReferenceMaker returnTypeMaker, StatementMaker returnStatementMaker, AccessLevel access) {
 		if (useGuavaInstead(builderType)) {
-			guavaMapSingularizer.generateMethods(data, deprecate, builderType, fluent, chain);
+			guavaMapSingularizer.generateMethods(cfv, data, deprecate, builderType, fluent, returnTypeMaker, returnStatementMaker, access);
 			return;
 		}
 		
-		TypeReference returnType = chain ? cloneSelfType(builderType) : TypeReference.baseTypeReference(TypeIds.T_void, 0);
-		Statement returnStatement = chain ? new ReturnStatement(new ThisReference(0, 0), 0, 0) : null;
-		generateSingularMethod(deprecate, returnType, returnStatement, data, builderType, fluent);
-		
-		returnType = chain ? cloneSelfType(builderType) : TypeReference.baseTypeReference(TypeIds.T_void, 0);
-		returnStatement = chain ? new ReturnStatement(new ThisReference(0, 0), 0, 0) : null;
-		generatePluralMethod(deprecate, returnType, returnStatement, data, builderType, fluent);
-		
-		returnType = chain ? cloneSelfType(builderType) : TypeReference.baseTypeReference(TypeIds.T_void, 0);
-		returnStatement = chain ? new ReturnStatement(new ThisReference(0, 0), 0, 0) : null;
-		generateClearMethod(deprecate, returnType, returnStatement, data, builderType);
+		generateSingularMethod(cfv, deprecate, returnTypeMaker.make(), returnStatementMaker.make(), data, builderType, fluent, access);
+		generatePluralMethod(cfv, deprecate, returnTypeMaker.make(), returnStatementMaker.make(), data, builderType, fluent, access);
+		generateClearMethod(cfv, deprecate, returnTypeMaker.make(), returnStatementMaker.make(), data, builderType, access);
 	}
 	
-	private void generateClearMethod(boolean deprecate, TypeReference returnType, Statement returnStatement, SingularData data, EclipseNode builderType) {
+	private void generateClearMethod(CheckerFrameworkVersion cfv, boolean deprecate, TypeReference returnType, Statement returnStatement, SingularData data, EclipseNode builderType, AccessLevel access) {
 		MethodDeclaration md = new MethodDeclaration(((CompilationUnitDeclaration) builderType.top().get()).compilationResult);
 		md.bits |= ECLIPSE_DO_NOT_TOUCH_FLAG;
-		md.modifiers = ClassFileConstants.AccPublic;
+		md.modifiers = toEclipseModifier(access);
 		
 		String pN = new String(data.getPluralName());
 		char[] keyFieldName = (pN + "$key").toCharArray();
@@ -179,15 +189,16 @@ public class EclipseJavaUtilMapSingularizer extends EclipseJavaUtilSingularizer 
 		Statement clearStatement = new IfStatement(new EqualExpression(thisDotField, new NullLiteral(0, 0), OperatorIds.NOT_EQUAL), clearMsgs, 0, 0);
 		md.statements = returnStatement != null ? new Statement[] {clearStatement, returnStatement} : new Statement[] {clearStatement};
 		md.returnType = returnType;
-		md.annotations = deprecate ? new Annotation[] { generateDeprecatedAnnotation(data.getSource()) } : null;
+		md.annotations = generateSelfReturnAnnotations(deprecate, cfv, data.getSource());
 		
+		data.setGeneratedByRecursive(md);
 		injectMethod(builderType, md);
 	}
 	
-	private void generateSingularMethod(boolean deprecate, TypeReference returnType, Statement returnStatement, SingularData data, EclipseNode builderType, boolean fluent) {
+	private void generateSingularMethod(CheckerFrameworkVersion cfv, boolean deprecate, TypeReference returnType, Statement returnStatement, SingularData data, EclipseNode builderType, boolean fluent, AccessLevel access) {
 		MethodDeclaration md = new MethodDeclaration(((CompilationUnitDeclaration) builderType.top().get()).compilationResult);
 		md.bits |= ECLIPSE_DO_NOT_TOUCH_FLAG;
-		md.modifiers = ClassFileConstants.AccPublic;
+		md.modifiers = toEclipseModifier(access);
 		
 		List<Statement> statements = new ArrayList<Statement>();
 		statements.add(createConstructBuilderVarIfNeeded(data, builderType, true));
@@ -220,24 +231,31 @@ public class EclipseJavaUtilMapSingularizer extends EclipseJavaUtilSingularizer 
 		}
 		if (returnStatement != null) statements.add(returnStatement);
 		
-		md.statements = statements.toArray(new Statement[statements.size()]);
+		md.statements = statements.toArray(new Statement[0]);
 		TypeReference keyParamType = cloneParamType(0, data.getTypeArgs(), builderType);
-		Argument keyParam = new Argument(keyParamName, 0, keyParamType, 0);
 		TypeReference valueParamType = cloneParamType(1, data.getTypeArgs(), builderType);
-		Argument valueParam = new Argument(valueParamName, 0, valueParamType, 0);
+		Annotation[] typeUseAnnsKey = getTypeUseAnnotations(keyParamType);
+		Annotation[] typeUseAnnsValue = getTypeUseAnnotations(valueParamType);
+		
+		removeTypeUseAnnotations(keyParamType);
+		removeTypeUseAnnotations(valueParamType);
+		Argument keyParam = new Argument(keyParamName, 0, keyParamType, ClassFileConstants.AccFinal);
+		Argument valueParam = new Argument(valueParamName, 0, valueParamType, ClassFileConstants.AccFinal);
+		keyParam.annotations = typeUseAnnsKey;
+		valueParam.annotations = typeUseAnnsValue;
 		md.arguments = new Argument[] {keyParam, valueParam};
 		md.returnType = returnType;
 		md.selector = fluent ? data.getSingularName() : HandlerUtil.buildAccessorName("put", new String(data.getSingularName())).toCharArray();
-		md.annotations = deprecate ? new Annotation[] { generateDeprecatedAnnotation(data.getSource()) } : null;
+		md.annotations = generateSelfReturnAnnotations(deprecate, cfv, data.getSource());
 		
 		data.setGeneratedByRecursive(md);
-		injectMethod(builderType, md);
+		HandleNonNull.INSTANCE.fix(injectMethod(builderType, md));
 	}
 	
-	private void generatePluralMethod(boolean deprecate, TypeReference returnType, Statement returnStatement, SingularData data, EclipseNode builderType, boolean fluent) {
+	private void generatePluralMethod(CheckerFrameworkVersion cfv, boolean deprecate, TypeReference returnType, Statement returnStatement, SingularData data, EclipseNode builderType, boolean fluent, AccessLevel access) {
 		MethodDeclaration md = new MethodDeclaration(((CompilationUnitDeclaration) builderType.top().get()).compilationResult);
 		md.bits |= ECLIPSE_DO_NOT_TOUCH_FLAG;
-		md.modifiers = ClassFileConstants.AccPublic;
+		md.modifiers = toEclipseModifier(access);
 		
 		String pN = new String(data.getPluralName());
 		char[] keyFieldName = (pN + "$key").toCharArray();
@@ -284,30 +302,30 @@ public class EclipseJavaUtilMapSingularizer extends EclipseJavaUtilSingularizer 
 		statements.add(forEach);
 		if (returnStatement != null) statements.add(returnStatement);
 		
-		md.statements = statements.toArray(new Statement[statements.size()]);
+		md.statements = statements.toArray(new Statement[0]);
 		
 		TypeReference paramType = new QualifiedTypeReference(JAVA_UTIL_MAP, NULL_POSS);
 		paramType = addTypeArgs(2, true, builderType, paramType, data.getTypeArgs());
-		Argument param = new Argument(data.getPluralName(), 0, paramType, 0);
+		Argument param = new Argument(data.getPluralName(), 0, paramType, ClassFileConstants.AccFinal);
 		md.arguments = new Argument[] {param};
 		md.returnType = returnType;
 		md.selector = fluent ? data.getPluralName() : HandlerUtil.buildAccessorName("putAll", new String(data.getPluralName())).toCharArray();
-		md.annotations = deprecate ? new Annotation[] { generateDeprecatedAnnotation(data.getSource()) } : null;
+		md.annotations = generateSelfReturnAnnotations(deprecate, cfv, data.getSource());
 		
 		data.setGeneratedByRecursive(md);
 		injectMethod(builderType, md);
 	}
 	
-	@Override public void appendBuildCode(SingularData data, EclipseNode builderType, List<Statement> statements, char[] targetVariableName) {
+	@Override public void appendBuildCode(SingularData data, EclipseNode builderType, List<Statement> statements, char[] targetVariableName, String builderVariable) {
 		if (useGuavaInstead(builderType)) {
-			guavaMapSingularizer.appendBuildCode(data, builderType, statements, targetVariableName);
+			guavaMapSingularizer.appendBuildCode(data, builderType, statements, targetVariableName, builderVariable);
 			return;
 		}
 		
 		if (data.getTargetFqn().equals("java.util.Map")) {
-			statements.addAll(createJavaUtilSetMapInitialCapacitySwitchStatements(data, builderType, true, "emptyMap", "singletonMap", "LinkedHashMap"));
+			statements.addAll(createJavaUtilSetMapInitialCapacitySwitchStatements(data, builderType, true, "emptyMap", "singletonMap", "LinkedHashMap", builderVariable));
 		} else {
-			statements.addAll(createJavaUtilSimpleCreationAndFillStatements(data, builderType, true, true, false, true, "TreeMap"));
+			statements.addAll(createJavaUtilSimpleCreationAndFillStatements(data, builderType, true, true, false, true, "TreeMap", builderVariable));
 		}
 	}
 }

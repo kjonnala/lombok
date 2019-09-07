@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2016 The Project Lombok Authors.
+ * Copyright (C) 2009-2019 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,10 +38,10 @@ import lombok.experimental.Delegate;
 import lombok.Getter;
 import lombok.core.AST.Kind;
 import lombok.core.AnnotationValues;
+import lombok.core.configuration.CheckerFrameworkVersion;
 import lombok.eclipse.EclipseAnnotationHandler;
 import lombok.eclipse.EclipseNode;
 import lombok.eclipse.agent.PatchDelegate;
-import lombok.eclipse.handlers.EclipseHandlerUtil.FieldAccess;
 
 import org.eclipse.jdt.internal.compiler.ast.ASTNode;
 import org.eclipse.jdt.internal.compiler.ast.AllocationExpression;
@@ -80,7 +80,7 @@ import org.mangosdk.spi.ProviderFor;
 public class HandleGetter extends EclipseAnnotationHandler<Getter> {
 	private static final Annotation[] EMPTY_ANNOTATIONS_ARRAY = new Annotation[0];
 
-	public boolean generateGetterForType(EclipseNode typeNode, EclipseNode pos, AccessLevel level, boolean checkForTypeLevelGetter) {
+	public boolean generateGetterForType(EclipseNode typeNode, EclipseNode pos, AccessLevel level, boolean checkForTypeLevelGetter, List<Annotation> onMethod) {
 		if (checkForTypeLevelGetter) {
 			if (hasAnnotation(Getter.class, typeNode)) {
 				//The annotation will make it happen, so we can skip it.
@@ -100,12 +100,12 @@ public class HandleGetter extends EclipseAnnotationHandler<Getter> {
 		}
 		
 		for (EclipseNode field : typeNode.down()) {
-			if (fieldQualifiesForGetterGeneration(field)) generateGetterForField(field, pos.get(), level, false);
+			if (fieldQualifiesForGetterGeneration(field)) generateGetterForField(field, pos.get(), level, false, onMethod);
 		}
 		return true;
 	}
 	
-	public boolean fieldQualifiesForGetterGeneration(EclipseNode field) {
+	public static boolean fieldQualifiesForGetterGeneration(EclipseNode field) {
 		if (field.getKind() != Kind.FIELD) return false;
 		FieldDeclaration fieldDecl = (FieldDeclaration) field.get();
 		return filterField(fieldDecl);
@@ -123,13 +123,13 @@ public class HandleGetter extends EclipseAnnotationHandler<Getter> {
 	 * If not, the getter is still generated if it isn't already there, though there will not
 	 * be a warning if its already there. The default access level is used.
 	 */
-	public void generateGetterForField(EclipseNode fieldNode, ASTNode pos, AccessLevel level, boolean lazy) {
+	public void generateGetterForField(EclipseNode fieldNode, ASTNode pos, AccessLevel level, boolean lazy, List<Annotation> onMethod) {
 		if (hasAnnotation(Getter.class, fieldNode)) {
 			//The annotation will make it happen, so we can skip it.
 			return;
 		}
 		
-		createGetterForField(level, fieldNode, fieldNode, pos, false, lazy, Collections.<Annotation>emptyList());
+		createGetterForField(level, fieldNode, fieldNode, pos, false, lazy, onMethod);
 	}
 	
 	public void handle(AnnotationValues<Getter> annotation, Annotation ast, EclipseNode annotationNode) {
@@ -155,11 +155,8 @@ public class HandleGetter extends EclipseAnnotationHandler<Getter> {
 			createGetterForFields(level, annotationNode.upFromAnnotationToFields(), annotationNode, annotationNode.get(), true, lazy, onMethod);
 			break;
 		case TYPE:
-			if (!onMethod.isEmpty()) {
-				annotationNode.addError("'onMethod' is not supported for @Getter on a type.");
-			}
 			if (lazy) annotationNode.addError("'lazy' is not supported for @Getter on a type.");
-			generateGetterForType(node, annotationNode, level, false);
+			generateGetterForType(node, annotationNode, level, false, onMethod);
 			break;
 		}
 	}
@@ -240,8 +237,6 @@ public class HandleGetter extends EclipseAnnotationHandler<Getter> {
 	}
 	
 	public MethodDeclaration createGetter(TypeDeclaration parent, EclipseNode fieldNode, String name, int modifier, ASTNode source, boolean lazy, List<Annotation> onMethod) {
-		FieldDeclaration field = (FieldDeclaration) fieldNode.get();
-		
 		// Remember the type; lazy will change it;
 		TypeReference returnType = copyType(((FieldDeclaration) fieldNode.get()).type, source);
 		
@@ -268,18 +263,17 @@ public class HandleGetter extends EclipseAnnotationHandler<Getter> {
 		
 		EclipseHandlerUtil.registerCreatedLazyGetter((FieldDeclaration) fieldNode.get(), method.selector, returnType);
 		
-		/* Generate annotations that must  be put on the generated method, and attach them. */ {
-			Annotation[] deprecated = null;
-			if (isFieldDeprecated(fieldNode)) {
-				deprecated = new Annotation[] { generateDeprecatedAnnotation(source) };
-			}
+		/* Generate annotations that must be put on the generated method, and attach them. */ {
+			Annotation[] deprecated = null, checkerFramework = null;
+			if (isFieldDeprecated(fieldNode)) deprecated = new Annotation[] { generateDeprecatedAnnotation(source) };
+			if (getCheckerFrameworkVersion(fieldNode).generateSideEffectFree()) checkerFramework = new Annotation[] { generateNamedAnnotation(source, CheckerFrameworkVersion.NAME__SIDE_EFFECT_FREE) };
 			
 			method.annotations = copyAnnotations(source,
-					onMethod.toArray(new Annotation[0]),
-					findAnnotations(field, NON_NULL_PATTERN),
-					findAnnotations(field, NULLABLE_PATTERN),
-					findDelegatesAndMarkAsHandled(fieldNode),
-					deprecated);
+				onMethod.toArray(new Annotation[0]),
+				findCopyableAnnotations(fieldNode),
+				findDelegatesAndMarkAsHandled(fieldNode),
+				checkerFramework,
+				deprecated);
 		}
 		
 		method.traverse(new SetGeneratedByVisitor(source), parent.scope);

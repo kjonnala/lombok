@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2017 The Project Lombok Authors.
+ * Copyright (C) 2015-2019 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,7 @@ import java.util.Map;
 
 import org.eclipse.jdt.internal.compiler.ast.ASTNode;
 import org.eclipse.jdt.internal.compiler.ast.AbstractMethodDeclaration;
+import org.eclipse.jdt.internal.compiler.ast.Annotation;
 import org.eclipse.jdt.internal.compiler.ast.ConditionalExpression;
 import org.eclipse.jdt.internal.compiler.ast.EqualExpression;
 import org.eclipse.jdt.internal.compiler.ast.Expression;
@@ -45,6 +46,9 @@ import org.eclipse.jdt.internal.compiler.ast.OperatorIds;
 import org.eclipse.jdt.internal.compiler.ast.ParameterizedQualifiedTypeReference;
 import org.eclipse.jdt.internal.compiler.ast.ParameterizedSingleTypeReference;
 import org.eclipse.jdt.internal.compiler.ast.QualifiedTypeReference;
+import org.eclipse.jdt.internal.compiler.ast.Reference;
+import org.eclipse.jdt.internal.compiler.ast.ReturnStatement;
+import org.eclipse.jdt.internal.compiler.ast.SingleNameReference;
 import org.eclipse.jdt.internal.compiler.ast.SingleTypeReference;
 import org.eclipse.jdt.internal.compiler.ast.Statement;
 import org.eclipse.jdt.internal.compiler.ast.ThisReference;
@@ -53,13 +57,24 @@ import org.eclipse.jdt.internal.compiler.ast.Wildcard;
 import org.eclipse.jdt.internal.compiler.lookup.ClassScope;
 import org.eclipse.jdt.internal.compiler.lookup.MethodScope;
 import org.eclipse.jdt.internal.compiler.lookup.TypeConstants;
+import org.eclipse.jdt.internal.compiler.lookup.TypeIds;
 
+import lombok.AccessLevel;
 import lombok.core.LombokImmutableList;
 import lombok.core.SpiLoadUtil;
 import lombok.core.TypeLibrary;
+import lombok.core.configuration.CheckerFrameworkVersion;
 import lombok.eclipse.EclipseNode;
 
 public class EclipseSingularsRecipes {
+	public interface TypeReferenceMaker {
+		TypeReference make();
+	}
+	
+	public interface StatementMaker {
+		Statement make();
+	}
+	
 	private static final EclipseSingularsRecipes INSTANCE = new EclipseSingularsRecipes();
 	private final Map<String, EclipseSingularizer> singularizers = new HashMap<String, EclipseSingularizer>();
 	private final TypeLibrary singularizableTypes = new TypeLibrary();
@@ -215,8 +230,36 @@ public class EclipseSingularsRecipes {
 		}
 		
 		public abstract List<EclipseNode> generateFields(SingularData data, EclipseNode builderType);
-		public abstract void generateMethods(SingularData data, boolean deprecate, EclipseNode builderType, boolean fluent, boolean chain);
-		public abstract void appendBuildCode(SingularData data, EclipseNode builderType, List<Statement> statements, char[] targetVariableName);
+		
+		/**
+		 * Generates the singular, plural, and clear methods for the given {@link SingularData}.
+		 * Uses the given {@code builderType} as return type if {@code chain == true}, {@code void} otherwise.
+		 * If you need more control over the return type and value, use
+		 * {@link #generateMethods(SingularData, boolean, EclipseNode, boolean, TypeReferenceMaker, StatementMaker)}.
+		 */
+		public void generateMethods(CheckerFrameworkVersion cfv, SingularData data, boolean deprecate, final EclipseNode builderType, boolean fluent, final boolean chain, AccessLevel access) {
+			TypeReferenceMaker returnTypeMaker = new TypeReferenceMaker() {
+				@Override public TypeReference make() {
+					return chain ? cloneSelfType(builderType) : TypeReference.baseTypeReference(TypeIds.T_void, 0);
+				}
+			};
+			
+			StatementMaker returnStatementMaker = new StatementMaker() {
+				@Override public ReturnStatement make() {
+					return chain ? new ReturnStatement(new ThisReference(0, 0), 0, 0) : null;
+				}
+			};
+			
+			generateMethods(cfv, data, deprecate, builderType, fluent, returnTypeMaker, returnStatementMaker, access);
+		}
+		
+		/**
+		 * Generates the singular, plural, and clear methods for the given {@link SingularData}.
+		 * Uses the given {@code returnTypeMaker} and {@code returnStatementMaker} for the generated methods.
+		 */
+		public abstract void generateMethods(CheckerFrameworkVersion cfv, SingularData data, boolean deprecate, EclipseNode builderType, boolean fluent, TypeReferenceMaker returnTypeMaker, StatementMaker returnStatementMaker, AccessLevel access);
+		
+		public abstract void appendBuildCode(SingularData data, EclipseNode builderType, List<Statement> statements, char[] targetVariableName, String builderVariable);
 		
 		public boolean requiresCleaning() {
 			try {
@@ -230,6 +273,15 @@ public class EclipseSingularsRecipes {
 		}
 		
 		// -- Utility methods --
+		
+		protected Annotation[] generateSelfReturnAnnotations(boolean deprecate, CheckerFrameworkVersion cfv, ASTNode source) {
+			Annotation deprecated = deprecate ? generateDeprecatedAnnotation(source) : null;
+			Annotation returnsReceiver = cfv.generateReturnsReceiver() ? generateNamedAnnotation(source, CheckerFrameworkVersion.NAME__RETURNS_RECEIVER) : null;
+			if (deprecated == null && returnsReceiver == null) return null;
+			if (deprecated == null) return new Annotation[] {returnsReceiver};
+			if (returnsReceiver == null) return new Annotation[] {deprecated};
+			return new Annotation[] {deprecated, returnsReceiver};
+		}
 		
 		/**
 		 * Adds the requested number of type arguments to the provided type, copying each argument in {@code typeArgs}. If typeArgs is too long, the extra elements are ignored.
@@ -301,22 +353,22 @@ public class EclipseSingularsRecipes {
 			}
 			
 			if (arguments.isEmpty()) return null;
-			return arguments.toArray(new TypeReference[arguments.size()]);
+			return arguments.toArray(new TypeReference[0]);
 		}
 		
 		private static final char[] SIZE_TEXT = new char[] {'s', 'i', 'z', 'e'};
 		
 		/** Generates 'this.<em>name</em>.size()' as an expression; if nullGuard is true, it's this.name == null ? 0 : this.name.size(). */
-		protected Expression getSize(EclipseNode builderType, char[] name, boolean nullGuard) {
+		protected Expression getSize(EclipseNode builderType, char[] name, boolean nullGuard, String builderVariable) {
 			MessageSend invoke = new MessageSend();
-			ThisReference thisRef = new ThisReference(0, 0);
+			Reference thisRef = getBuilderReference(builderVariable);
 			FieldReference thisDotName = new FieldReference(name, 0L);
 			thisDotName.receiver = thisRef;
 			invoke.receiver = thisDotName;
 			invoke.selector = SIZE_TEXT;
 			if (!nullGuard) return invoke;
 			
-			ThisReference cdnThisRef = new ThisReference(0, 0);
+			Reference cdnThisRef = getBuilderReference(builderVariable);
 			FieldReference cdnThisDotName = new FieldReference(name, 0L);
 			cdnThisDotName.receiver = cdnThisRef;
 			NullLiteral nullLiteral = new NullLiteral(0, 0);
@@ -345,5 +397,17 @@ public class EclipseSingularsRecipes {
 			
 			return new QualifiedTypeReference(TypeConstants.JAVA_LANG_OBJECT, NULL_POSS);
 		}
+		
+		/** @return a {@code SingleNameReference} to the builder in the variable <code>builderVariable</code>. If {@ code builderVariable == "this"}, a {@code ThisReference} is returned. */
+		protected static Reference getBuilderReference(String builderVariable) {
+			if ("this".equals(builderVariable)) {
+				return new ThisReference(0, 0);
+			} else {
+				return new SingleNameReference(builderVariable.toCharArray(), 0);
+			}
+		}
+		
+		protected abstract char[][] getEmptyMakerReceiver(String targetFqn);
+		protected abstract char[] getEmptyMakerSelector(String targetFqn);
 	}
 }

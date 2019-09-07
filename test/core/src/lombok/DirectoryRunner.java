@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009-2015 The Project Lombok Authors.
+ * Copyright (C) 2009-2019 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -36,6 +36,9 @@ import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunNotifier;
 
 public class DirectoryRunner extends Runner {
+	/** Fill in a file name (or multiple, space separated) to reduce the testset to just the named file(s). */
+	private static final String DEBUG_FOCUS_ON_FILE = "";
+	
 	public enum Compiler {
 		DELOMBOK {
 			@Override public int getVersion() {
@@ -73,10 +76,11 @@ public class DirectoryRunner extends Runner {
 		
 		public abstract boolean expectChanges(); 
 	}
-		
+	
 	private static final FileFilter JAVA_FILE_FILTER = new FileFilter() {
 		@Override public boolean accept(File file) {
-			return file.isFile() && file.getName().endsWith(".java");
+			return file.isFile() && file.getName().endsWith(".java") &&
+				(DEBUG_FOCUS_ON_FILE.isEmpty() || (" " + DEBUG_FOCUS_ON_FILE + " ").contains(" " + file.getName() + " "));
 		}
 	};
 	
@@ -88,7 +92,7 @@ public class DirectoryRunner extends Runner {
 	public DirectoryRunner(Class<?> testClass) throws Exception {
 		description = Description.createSuiteDescription(testClass);
 		
-		this.params = (TestParams) testClass.newInstance();
+		this.params = (TestParams) testClass.getConstructor().newInstance();
 		
 		Throwable error = null;
 		try {

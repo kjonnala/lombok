@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 The Project Lombok Authors.
+ * Copyright (C) 2015-2019 The Project Lombok Authors.
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -37,16 +37,30 @@ public class EclipseJavaUtilSetSingularizer extends EclipseJavaUtilListSetSingul
 		return LombokImmutableList.of("java.util.Set", "java.util.SortedSet", "java.util.NavigableSet");
 	}
 	
-	@Override public void appendBuildCode(SingularData data, EclipseNode builderType, List<Statement> statements, char[] targetVariableName) {
+	private static final char[] EMPTY_SORTED_SET = {'e', 'm', 'p', 't', 'y', 'S', 'o', 'r', 't', 'e', 'd', 'S', 'e', 't'};
+	private static final char[] EMPTY_NAVIGABLE_SET = {'e', 'm', 'p', 't', 'y', 'N', 'a', 'v', 'i', 'g', 'a', 'b', 'l', 'e', 'S', 'e', 't'};
+	private static final char[] EMPTY_SET = {'e', 'm', 'p', 't', 'y', 'S', 'e', 't'};
+	
+	@Override protected char[][] getEmptyMakerReceiver(String targetFqn) {
+		return JAVA_UTIL_COLLECTIONS;
+	}
+	
+	@Override protected char[] getEmptyMakerSelector(String targetFqn) {
+		if (targetFqn.endsWith("SortedSet")) return EMPTY_SORTED_SET;
+		if (targetFqn.endsWith("NavigableSet")) return EMPTY_NAVIGABLE_SET;
+		return EMPTY_SET;
+	}
+	
+	@Override public void appendBuildCode(SingularData data, EclipseNode builderType, List<Statement> statements, char[] targetVariableName, String builderVariable) {
 		if (useGuavaInstead(builderType)) {
-			guavaListSetSingularizer.appendBuildCode(data, builderType, statements, targetVariableName);
+			guavaListSetSingularizer.appendBuildCode(data, builderType, statements, targetVariableName, builderVariable);
 			return;
 		}
 		
 		if (data.getTargetFqn().equals("java.util.Set")) {
-			statements.addAll(createJavaUtilSetMapInitialCapacitySwitchStatements(data, builderType, false, "emptySet", "singleton", "LinkedHashSet"));
+			statements.addAll(createJavaUtilSetMapInitialCapacitySwitchStatements(data, builderType, false, "emptySet", "singleton", "LinkedHashSet", builderVariable));
 		} else {
-			statements.addAll(createJavaUtilSimpleCreationAndFillStatements(data, builderType, false, true, false, true, "TreeSet"));
+			statements.addAll(createJavaUtilSimpleCreationAndFillStatements(data, builderType, false, true, false, true, "TreeSet", builderVariable));
 		}
 	}
 }
